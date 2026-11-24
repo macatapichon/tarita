@@ -1,0 +1,8 @@
+.shell { display: flex; height: 100vh; background: var(--bg-app); }
+.column { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.main { flex: 1; overflow: auto; padding: var(--space-6); }
+.content { max-width: 1536px; margin: 0 auto; }
+.title { margin: 0 0 var(--space-6); font: 600 28px/36px var(--font-sans); color: var(--text-strong); }
+.overlay { position: fixed; inset: 0; z-index: 30; background: var(--overlay); }
+
+@media (min-width: 1280px) { .main { padding: var(--space-8); } }

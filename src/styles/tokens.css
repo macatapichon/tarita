@@ -1,0 +1,107 @@
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-app: #F9FAFB;
+  --bg-chrome: #FFFFFF;
+  --bg-surface: #FFFFFF;
+  --bg-subtle: #F9FAFB;
+  --border: #E4E7EC;
+  --border-strong: #D0D5DD;
+
+  --text-strong: #101828;
+  --text: #344054;
+  --text-muted: #667085;
+  --text-placeholder: #98A2B3;
+
+  --brand: #465FFF;
+  --brand-hover: #3641F5;
+  --brand-soft-bg: #ECF3FF;
+  --brand-soft-text: #465FFF;
+
+  --income-bg: #ECFDF3;   --income-text: #039855;
+  --expense-bg: #FEF3F2;  --expense-text: #D92D20;
+  --warning-bg: #FFFAEB;  --warning-text: #DC6803;
+  --purple-bg: #F4F3FF;   --purple-text: #6938EF;
+
+  --focus-ring: rgba(70, 95, 255, .12);
+  --focus-border: #9CB9FF;
+  --tooltip-bg: #101828;
+  --overlay: rgba(16, 24, 40, .50);
+
+  --shadow-xs: 0 1px 2px rgba(16,24,40,.05);
+  --shadow-sm: 0 1px 3px rgba(16,24,40,.10), 0 1px 2px rgba(16,24,40,.06);
+  --shadow-md: 0 4px 8px -2px rgba(16,24,40,.10), 0 2px 4px -2px rgba(16,24,40,.06);
+  --shadow-lg: 0 12px 16px -4px rgba(16,24,40,.08), 0 4px 6px -2px rgba(16,24,40,.03);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-app: #101828;
+  --bg-chrome: #101828;
+  --bg-surface: #171F2E;
+  --bg-subtle: rgba(255, 255, 255, .04);
+  --border: #1D2939;
+  --border-strong: #344054;
+
+  --text-strong: #F2F4F7;
+  --text: #D0D5DD;
+  --text-muted: #98A2B3;
+  --text-placeholder: #667085;
+
+  --brand: #465FFF;
+  --brand-hover: #5A72FF;
+  --brand-soft-bg: rgba(70, 95, 255, .12);
+  --brand-soft-text: #7592FF;
+
+  --income-bg: rgba(18, 183, 106, .15);   --income-text: #32D583;
+  --expense-bg: rgba(240, 68, 56, .15);   --expense-text: #F97066;
+  --warning-bg: rgba(247, 144, 9, .15);   --warning-text: #FDB022;
+  --purple-bg: rgba(105, 56, 239, .18);   --purple-text: #9B8AFB;
+
+  --focus-ring: rgba(70, 95, 255, .30);
+  --focus-border: #2A31D8;
+  --tooltip-bg: #344054;
+  --overlay: rgba(0, 0, 0, .60);
+
+  --shadow-xs: none; --shadow-sm: none; --shadow-md: none; --shadow-lg: none;
+}
+
+/* Tokens que no cambian entre temas */
+:root {
+  --on-solid: #FFFFFF;
+  --danger-solid: #D92D20;
+  --danger-solid-hover: #B42318;
+  --error-border: #F04438;
+  --progress-warn: #F79009;
+  --progress-over: #F04438;
+
+  /* Paleta de gráficos (§3.3), en orden fijo. */
+  --chart-1: #465FFF; --chart-2: #36BFFA; --chart-3: #12B76A; --chart-4: #F79009;
+  --chart-5: #9B8AFB; --chart-6: #F04438; --chart-7: #98A2B3;
+
+  --font-sans: "Outfit Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --radius-sm: 6px;  --radius-md: 8px;  --radius-lg: 12px;
+  --radius-xl: 16px; --radius-full: 9999px;
+
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px;
+
+  --sidebar-w: 290px; --sidebar-w-collapsed: 90px; --header-h: 72px;
+  --control-h: 44px;  --control-h-sm: 36px;
+}
+
+html { font-family: var(--font-sans); font-size: 14px; line-height: 20px;
+       background: var(--bg-app); color: var(--text);
+       -webkit-font-smoothing: antialiased; }
+
+:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--focus-ring); }
+
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; background: var(--bg-app); color: var(--text); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

@@ -1,0 +1,6 @@
+.wrap { display: flex; flex-direction: column; gap: 6px; min-width: 120px; }
+.track { height: 8px; border-radius: var(--radius-full); background: var(--bg-subtle); overflow: hidden; border: 1px solid var(--border); }
+.fill { height: 100%; border-radius: var(--radius-full); background: var(--brand); transition: width 200ms ease-out; }
+.warn { background: var(--progress-warn); }
+.over { background: var(--progress-over); }
+.label { font: 500 12px/18px var(--font-sans); color: var(--text-muted); font-variant-numeric: tabular-nums; }

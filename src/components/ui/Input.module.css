@@ -1,0 +1,40 @@
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
+.label { font: 500 14px/20px var(--font-sans); color: var(--text); }
+.control { position: relative; display: flex; align-items: center; }
+
+.input {
+  width: 100%;
+  min-width: 0;
+  height: var(--control-h);
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-strong);
+  font: 400 14px/20px var(--font-sans);
+  box-shadow: var(--shadow-xs);
+  transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
+  user-select: text;
+}
+.input::placeholder { color: var(--text-placeholder); }
+.input:focus, .input:focus-visible { outline: none; border-color: var(--focus-border); box-shadow: 0 0 0 4px var(--focus-ring); }
+.input:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.invalid, .invalid:focus, .invalid:focus-visible { border-color: var(--error-border); }
+.withIcon { padding-left: 44px; }
+.amount { text-align: right; font-variant-numeric: tabular-nums; padding-left: 52px; }
+
+.icon, .prefix {
+  position: absolute;
+  left: 14px;
+  display: flex;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.prefix { font: 400 14px/20px var(--font-sans); font-variant-numeric: tabular-nums; }
+
+.select { appearance: none; padding-right: 40px; cursor: pointer; }
+.chevron { position: absolute; right: 14px; display: flex; color: var(--text-muted); pointer-events: none; }
+
+.help { font: 500 12px/18px var(--font-sans); color: var(--text-muted); }
+.error { font: 500 12px/18px var(--font-sans); color: var(--expense-text); }
