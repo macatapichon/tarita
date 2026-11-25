@@ -1,8 +1,7 @@
 # Tarita
 
 App de escritorio (macOS) para controlar el stock de filamento de impresión 3D y el consumo de cada impresión.
-Sabe cuántos gramos quedan de cada carrete, cuántos están reservados para impresiones pendientes y cuánto costó
-cada impresión. Todos los datos quedan locales, en una base SQLite.
+Sabe cuántos gramos quedan de cada carrete y cuánto costó cada impresión. Todos los datos quedan locales, en una base SQLite.
 
 - **Stack:** [Tauri 2](https://tauri.app) (Rust) + React + TypeScript + Vite.
 - **Base de datos:** SQLite vía `rusqlite`, con la lógica de stock en Rust. Migraciones en [src-tauri/migrations/](src-tauri/migrations).
@@ -12,11 +11,12 @@ cada impresión. Todos los datos quedan locales, en una base SQLite.
 ## Conceptos
 
 - **Filamento:** un carrete con marca, material, color, diámetro, peso inicial (1000 g por defecto) y precio opcional.
-- **Impresión:** usa uno o varios filamentos, con los gramos de cada uno. Puede crearse en cualquier estado.
-- **Estados:** `planned` y `printing` figuran como **reservado** y no descuentan. `completed` descuenta los gramos
-  estimados. `failed` pide los gramos realmente gastados. `cancelled` no descuenta.
+- **Impresión:** usa uno o varios filamentos, con los gramos de cada uno. Puede crearse, editarse y eliminarse en cualquier estado.
+- **Estados:** `planned` y `printing` no descuentan. `completed` y `failed` descuentan los gramos
+  usados que se ingresan para cada filamento. `cancelled` no descuenta.
 - **Gramos restantes** = peso inicial − gramos de impresiones `completed` o `failed` ± ajustes de stock.
   Los ajustes sirven para corregir el valor pesando el carrete. Nada se guarda como total: todo se calcula desde los movimientos.
+- **Residuo:** el botón de cada filamento activo registra gramos descartados (los que la impresora no toma y usás para otra cosa). Se guarda como un ajuste negativo con motivo "Residuo" y descuenta del stock.
 - **Catálogo:** marcas (Bambu Lab, Creality, Elegoo, Toolbox, Fremover) y materiales (PLA y variantes, PETG, ASA, ABS, PC,
   TPU, PA, PVA, PEBA) vienen precargados. Se pueden agregar, editar y archivar.
 

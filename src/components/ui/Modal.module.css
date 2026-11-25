@@ -28,6 +28,7 @@
   box-shadow: var(--shadow-lg);
 }
 .sm { width: 400px; border-radius: var(--radius-lg); }
+.lg { width: 760px; }
 
 .header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-5); }
 .title { margin: 0; font: 600 20px/28px var(--font-sans); color: var(--text-strong); }

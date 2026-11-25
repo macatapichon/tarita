@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Archive, ArchiveRestore, Pencil, Plus } from "lucide-react";
+import { Archive, ArchiveRestore, Eraser, Pencil, Plus } from "lucide-react";
 import { api, materialLabel, type Brand, type Filament, type FilamentInput, type Material } from "../lib/api";
 import { useLoad } from "../lib/useLoad";
 import {
@@ -7,17 +7,16 @@ import {
   Button,
   Card,
   CardBody,
+  Combobox,
   EmptyState,
   IconButton,
   Input,
   Modal,
   ProgressBar,
-  Select,
 } from "../components/ui";
 import styles from "./Pages.module.css";
 
 const DEFAULT_WEIGHT_G = 1000;
-const DEFAULT_LOW_STOCK_G = 100;
 const DEFAULT_DIAMETER_MM = 1.75;
 const CURRENCY_PREFIX: Record<"ARS" | "USD", string> = { ARS: "$", USD: "US$" };
 
@@ -26,6 +25,7 @@ const formatGrams = (g: number) => `${Math.round(g).toLocaleString("es-AR")} g`;
 export function FilamentsPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [editing, setEditing] = useState<Filament | "new" | null>(null);
+  const [wasting, setWasting] = useState<Filament | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const filaments = useLoad(() => api.listFilaments(showArchived), [showArchived]);
 
@@ -81,17 +81,21 @@ export function FilamentsPage() {
                     label={`${formatGrams(f.remainingG)} restantes de ${formatGrams(f.initialWeightG)}`}
                     aria-label={`Stock de ${f.colorName}`}
                   />
-                  <div className={styles.meta}>
-                    {f.reservedG > 0 && <span>{formatGrams(f.reservedG)} reservados</span>}
-                    <span>Libre: {formatGrams(f.freeG)}</span>
-                    {f.remainingG <= f.lowStockThresholdG && <Badge variant="warning">Stock bajo</Badge>}
-                  </div>
                 </div>
                 <span className={styles.rowActions}>
-                  <IconButton icon={Pencil} label={`Editar ${f.colorName}`} onClick={() => setEditing(f)} />
+                  <IconButton icon={Pencil} label={`Editar ${f.colorName}`} tooltip="Editar" onClick={() => setEditing(f)} />
+                  {!f.archived && (
+                    <IconButton
+                      icon={Eraser}
+                      label={`Agregar residuo de ${f.colorName}`}
+                      tooltip="Agregar residuo"
+                      onClick={() => setWasting(f)}
+                    />
+                  )}
                   <IconButton
                     icon={f.archived ? ArchiveRestore : Archive}
                     label={f.archived ? `Desarchivar ${f.colorName}` : `Archivar ${f.colorName}`}
+                    tooltip={f.archived ? "Desarchivar" : "Archivar"}
                     onClick={() => toggleArchive(f)}
                   />
                 </span>
@@ -100,6 +104,17 @@ export function FilamentsPage() {
           </ul>
         </CardBody>
       </Card>
+
+      {wasting && (
+        <WasteModal
+          filament={wasting}
+          onClose={() => setWasting(null)}
+          onSaved={() => {
+            setWasting(null);
+            filaments.reload();
+          }}
+        />
+      )}
 
       {editing && (
         <FilamentModal
@@ -122,7 +137,6 @@ interface FormState {
   colorHex: string;
   diameterMm: string;
   initialWeightG: string;
-  lowStockThresholdG: string;
   currency: "ARS" | "USD";
   price: string;
   purchasedAt: string;
@@ -136,7 +150,6 @@ function initialForm(f?: Filament): FormState {
     colorHex: f?.colorHex ?? "#FFFFFF",
     diameterMm: String(f?.diameterMm ?? DEFAULT_DIAMETER_MM),
     initialWeightG: String(f?.initialWeightG ?? DEFAULT_WEIGHT_G),
-    lowStockThresholdG: String(f?.lowStockThresholdG ?? DEFAULT_LOW_STOCK_G),
     currency: f?.currency ?? "ARS",
     price: f?.price != null ? String(f.price) : "",
     purchasedAt: f?.purchasedAt ?? "",
@@ -153,7 +166,6 @@ function toInput(form: FormState): FilamentInput {
     colorHex: form.colorHex || null,
     diameterMm: num(form.diameterMm),
     initialWeightG: num(form.initialWeightG),
-    lowStockThresholdG: num(form.lowStockThresholdG),
     price,
     currency: form.currency,
     purchasedAt: form.purchasedAt || null,
@@ -180,6 +192,10 @@ function FilamentModal({ filament, onClose, onSaved }: { filament?: Filament; on
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!form.brandId || !form.materialId) {
+      setError("Elegí una marca y un material");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -207,14 +223,20 @@ function FilamentModal({ filament, onClose, onSaved }: { filament?: Filament; on
       <form id="filament-form" onSubmit={submit} className={styles.form}>
         {error && <p className={styles.error} role="alert">{error}</p>}
         <div className={styles.grid2}>
-          <Select label="Marca" value={form.brandId} onChange={(e) => set("brandId", e.target.value)} required>
-            <option value="" disabled>Elegí una marca</option>
-            {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </Select>
-          <Select label="Material" value={form.materialId} onChange={(e) => set("materialId", e.target.value)} required>
-            <option value="" disabled>Elegí un material</option>
-            {materials.map((m) => <option key={m.id} value={m.id}>{materialLabel(m)}</option>)}
-          </Select>
+          <Combobox
+            label="Marca"
+            value={form.brandId}
+            onChange={(v) => set("brandId", v)}
+            options={brands.map((b) => ({ value: String(b.id), label: b.name }))}
+            placeholder="Buscar marca…"
+          />
+          <Combobox
+            label="Material"
+            value={form.materialId}
+            onChange={(v) => set("materialId", v)}
+            options={materials.map((m) => ({ value: String(m.id), label: materialLabel(m) }))}
+            placeholder="Buscar material…"
+          />
         </div>
         <div className={styles.grid2}>
           <Input label="Color" value={form.colorName} onChange={(e) => set("colorName", e.target.value)} required />
@@ -224,10 +246,15 @@ function FilamentModal({ filament, onClose, onSaved }: { filament?: Filament; on
           </label>
         </div>
         <div className={styles.grid2}>
-          <Select label="Diámetro" value={form.diameterMm} onChange={(e) => set("diameterMm", e.target.value)}>
-            <option value="1.75">1.75 mm</option>
-            <option value="2.85">2.85 mm</option>
-          </Select>
+          <Combobox
+            label="Diámetro"
+            value={form.diameterMm}
+            onChange={(v) => set("diameterMm", v)}
+            options={[
+              { value: "1.75", label: "1.75 mm" },
+              { value: "2.85", label: "2.85 mm" },
+            ]}
+          />
           <Input
             label="Peso inicial (g)"
             type="number"
@@ -241,10 +268,15 @@ function FilamentModal({ filament, onClose, onSaved }: { filament?: Filament; on
           />
         </div>
         <div className={styles.grid2}>
-          <Select label="Moneda" value={form.currency} onChange={(e) => set("currency", e.target.value as "ARS" | "USD")}>
-            <option value="ARS">Pesos (ARS)</option>
-            <option value="USD">Dólares (USD)</option>
-          </Select>
+          <Combobox
+            label="Moneda"
+            value={form.currency}
+            onChange={(v) => set("currency", v as "ARS" | "USD")}
+            options={[
+              { value: "ARS", label: "Pesos (ARS)" },
+              { value: "USD", label: "Dólares (USD)" },
+            ]}
+          />
           <Input
             label="Precio"
             variant="amount"
@@ -259,17 +291,65 @@ function FilamentModal({ filament, onClose, onSaved }: { filament?: Filament; on
           />
         </div>
         <div className={styles.grid2}>
-          <Input
-            label="Aviso de stock bajo (g)"
-            type="number"
-            min="0"
-            step="any"
-            inputMode="decimal"
-            value={form.lowStockThresholdG}
-            onChange={(e) => set("lowStockThresholdG", e.target.value)}
-          />
           <Input label="Fecha de compra" type="date" value={form.purchasedAt} onChange={(e) => set("purchasedAt", e.target.value)} />
         </div>
+      </form>
+    </Modal>
+  );
+}
+
+function WasteModal({ filament, onClose, onSaved }: { filament: Filament; onClose: () => void; onSaved: () => void }) {
+  const [grams, setGrams] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const value = grams.trim() === "" ? NaN : Number(grams.replace(",", "."));
+    if (!(value > 0)) {
+      setError("Ingresá una cantidad de gramos mayor a 0");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await api.addFilamentWaste(filament.id, value);
+      onSaved();
+    } catch (err) {
+      setError(String(err));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Agregar residuo"
+      size="sm"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button variant="primary" type="submit" form="waste-form" loading={saving}>Descontar</Button>
+        </>
+      }
+    >
+      <form id="waste-form" onSubmit={submit} className={styles.form}>
+        {error && <p className={styles.error} role="alert">{error}</p>}
+        <p>
+          {filament.colorName} · {filament.brandName}. Quedan {formatGrams(filament.remainingG)}.
+        </p>
+        <Input
+          label="Gramos descartados"
+          type="number"
+          min="0"
+          step="any"
+          inputMode="decimal"
+          value={grams}
+          onChange={(e) => setGrams(e.target.value)}
+          hint="Lo que la impresora no toma y usás para otra cosa. Se descuenta del stock."
+          autoFocus
+          required
+        />
       </form>
     </Modal>
   );

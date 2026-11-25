@@ -31,6 +31,7 @@ pub fn run() {
             commands::create_filament,
             commands::update_filament,
             commands::set_filament_archived,
+            commands::add_filament_waste,
             commands::list_prints,
             commands::create_print,
             commands::update_print,

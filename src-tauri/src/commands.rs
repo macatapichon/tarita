@@ -71,6 +71,11 @@ pub fn set_filament_archived(state: State<DbState>, id: i64, archived: bool) -> 
 }
 
 #[tauri::command]
+pub fn add_filament_waste(state: State<DbState>, id: i64, grams: f64) -> Result<Filament, String> {
+    with_conn(&state, |c| filaments::add_waste(c, id, grams))
+}
+
+#[tauri::command]
 pub fn list_prints(state: State<DbState>) -> Result<Vec<Print>, String> {
     with_conn(&state, prints::list)
 }
@@ -86,8 +91,13 @@ pub fn create_print(
 }
 
 #[tauri::command]
-pub fn update_print(state: State<DbState>, id: i64, input: PrintInput) -> Result<Print, String> {
-    with_conn(&state, |c| prints::update(c, id, input))
+pub fn update_print(
+    state: State<DbState>,
+    id: i64,
+    input: PrintInput,
+    grams_used: Option<Vec<GramsUsedInput>>,
+) -> Result<Print, String> {
+    with_conn(&state, |c| prints::update(c, id, input, grams_used.unwrap_or_default()))
 }
 
 #[tauri::command]

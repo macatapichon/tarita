@@ -170,7 +170,6 @@ mod tests {
                 color_hex: None,
                 diameter_mm: 1.75,
                 initial_weight_g: 1000.0,
-                low_stock_threshold_g: 100.0,
                 price: Some(price),
                 currency: currency.into(),
                 purchased_at: purchased_at.map(String::from),
@@ -180,18 +179,18 @@ mod tests {
         .id
     }
 
-    fn print_with(filament_id: i64, grams: f64) -> PrintInput {
+    fn print_with(filament_id: i64) -> PrintInput {
         PrintInput {
             name: "Llavero".into(),
             description: None,
-            filaments: vec![PrintFilamentInput { filament_id, grams_estimated: grams }],
+            filaments: vec![PrintFilamentInput { filament_id }],
         }
     }
 
     /// Crea una impresión con estado final y fija finished_at a una fecha conocida.
     fn finished_print(c: &Connection, filament_id: i64, grams: f64, status: &str, finished_at: &str) {
         let used = vec![GramsUsedInput { filament_id, grams_used: grams }];
-        let id = prints::create(c, print_with(filament_id, grams), status, used).unwrap().id;
+        let id = prints::create(c, print_with(filament_id), status, used).unwrap().id;
         c.execute("UPDATE prints SET finished_at = ?1 WHERE id = ?2", params![finished_at, id])
             .unwrap();
     }
@@ -221,8 +220,8 @@ mod tests {
     fn ignores_planned_printing_and_cancelled_prints() {
         let c = conn();
         let f = filament(&c, 1000.0, "USD", None);
-        prints::create(&c, print_with(f, 100.0), "cancelled", vec![]).unwrap();
-        prints::create(&c, print_with(f, 100.0), "planned", vec![]).unwrap();
+        prints::create(&c, print_with(f), "cancelled", vec![]).unwrap();
+        prints::create(&c, print_with(f), "planned", vec![]).unwrap();
         let report = cost_report(&c, 2024, None).unwrap();
         assert!(report.rows.is_empty());
     }

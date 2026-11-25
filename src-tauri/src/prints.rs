@@ -14,7 +14,6 @@ pub struct PrintFilament {
     pub material_variant: Option<String>,
     pub color_name: String,
     pub color_hex: Option<String>,
-    pub grams_estimated: f64,
     pub grams_used: Option<f64>,
     pub currency: String,
     /// grams_used × precio por gramo. None si el filamento no tiene precio o no hay consumo.
@@ -47,7 +46,6 @@ pub struct Print {
 #[serde(rename_all = "camelCase")]
 pub struct PrintFilamentInput {
     pub filament_id: i64,
-    pub grams_estimated: f64,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -94,7 +92,7 @@ fn load_filament_rows(conn: &Connection, print_id: Option<i64>) -> Result<HashMa
     let mut stmt = conn
         .prepare(
             "SELECT pf.print_id, f.id, b.name, m.name, m.variant, f.color_name, f.color_hex,
-                    pf.grams_estimated, pf.grams_used, f.currency, f.price, f.initial_weight_g
+                    pf.grams_used, f.currency, f.price, f.initial_weight_g
              FROM print_filaments pf
              JOIN filaments f ON f.id = pf.filament_id
              JOIN brands b ON b.id = f.brand_id
@@ -105,9 +103,9 @@ fn load_filament_rows(conn: &Connection, print_id: Option<i64>) -> Result<HashMa
         .map_err(db_err)?;
     let rows = stmt
         .query_map(params![print_id], |r| {
-            let grams_used: Option<f64> = r.get(8)?;
-            let price: Option<f64> = r.get(10)?;
-            let initial_weight: f64 = r.get(11)?;
+            let grams_used: Option<f64> = r.get(7)?;
+            let price: Option<f64> = r.get(9)?;
+            let initial_weight: f64 = r.get(10)?;
             let cost = match (grams_used, price) {
                 (Some(g), Some(p)) => Some(g * p / initial_weight),
                 _ => None,
@@ -119,9 +117,8 @@ fn load_filament_rows(conn: &Connection, print_id: Option<i64>) -> Result<HashMa
                 material_variant: r.get(4)?,
                 color_name: r.get(5)?,
                 color_hex: r.get(6)?,
-                grams_estimated: r.get(7)?,
                 grams_used,
-                currency: r.get(9)?,
+                currency: r.get(8)?,
                 cost,
             };
             Ok((r.get::<_, i64>(0)?, row))
@@ -203,18 +200,6 @@ fn status_of(conn: &Connection, id: i64) -> Result<String, String> {
         .ok_or_else(|| "Impresión no encontrada".to_string())
 }
 
-fn current_filament_ids(conn: &Connection, id: i64) -> Result<HashSet<i64>, String> {
-    let mut stmt = conn
-        .prepare("SELECT filament_id FROM print_filaments WHERE print_id = ?1")
-        .map_err(db_err)?;
-    let ids = stmt
-        .query_map(params![id], |r| r.get::<_, i64>(0))
-        .map_err(db_err)?
-        .collect::<rusqlite::Result<HashSet<_>>>()
-        .map_err(db_err)?;
-    Ok(ids)
-}
-
 /// Valida la entrada. Los filamentos archivados solo se aceptan si ya estaban en la impresión.
 fn validate_input(conn: &Connection, input: PrintInput, current: &HashSet<i64>) -> Result<PrintInput, String> {
     let name = input.name.trim().to_string();
@@ -232,9 +217,6 @@ fn validate_input(conn: &Connection, input: PrintInput, current: &HashSet<i64>) 
     for row in &input.filaments {
         if !seen.insert(row.filament_id) {
             return Err("Un filamento aparece más de una vez en la impresión".into());
-        }
-        if !(row.grams_estimated > 0.0 && row.grams_estimated.is_finite()) {
-            return Err("Los gramos estimados deben ser mayores a 0".into());
         }
         let archived: Option<bool> = conn
             .query_row(
@@ -262,8 +244,8 @@ fn validate_input(conn: &Connection, input: PrintInput, current: &HashSet<i64>) 
 fn insert_rows(conn: &Connection, print_id: i64, rows: &[PrintFilamentInput]) -> Result<(), String> {
     for row in rows {
         conn.execute(
-            "INSERT INTO print_filaments (print_id, filament_id, grams_estimated) VALUES (?1, ?2, ?3)",
-            params![print_id, row.filament_id, row.grams_estimated],
+            "INSERT INTO print_filaments (print_id, filament_id) VALUES (?1, ?2)",
+            params![print_id, row.filament_id],
         )
         .map_err(db_err)?;
     }
@@ -279,12 +261,8 @@ pub fn create(
     grams_used: Vec<GramsUsedInput>,
 ) -> Result<Print, String> {
     let input = validate_input(conn, input, &HashSet::new())?;
-    let rows: Vec<(i64, f64)> = input
-        .filaments
-        .iter()
-        .map(|f| (f.filament_id, f.grams_estimated))
-        .collect();
-    let used = resolve_grams_used(status, &rows, grams_used)?;
+    let ids: Vec<i64> = input.filaments.iter().map(|f| f.filament_id).collect();
+    let used = resolve_grams_used(status, &ids, grams_used)?;
     let tx = conn.unchecked_transaction().map_err(db_err)?;
     tx.execute(
         &format!(
@@ -301,13 +279,21 @@ pub fn create(
     get(conn, id)
 }
 
-pub fn update(conn: &Connection, id: i64, input: PrintInput) -> Result<Print, String> {
+/// Edita nombre, descripción y filamentos. En impresiones completadas o fallidas hay que indicar
+/// `grams_used` de cada filamento, con las mismas reglas que al crear. Los filamentos quitados
+/// dejan de descontar stock.
+pub fn update(
+    conn: &Connection,
+    id: i64,
+    input: PrintInput,
+    grams_used: Vec<GramsUsedInput>,
+) -> Result<Print, String> {
     let status = status_of(conn, id)?;
-    if !matches!(status.as_str(), "planned" | "printing") {
-        return Err("Solo se pueden editar impresiones planificadas o en curso".into());
-    }
-    let current = current_filament_ids(conn, id)?;
+    let current = previous_filament_ids(conn, id)?;
     let input = validate_input(conn, input, &current)?;
+    let ids: Vec<i64> = input.filaments.iter().map(|f| f.filament_id).collect();
+    let used: HashMap<i64, f64> = resolve_grams_used(&status, &ids, grams_used)?.into_iter().collect();
+
     let tx = conn.unchecked_transaction().map_err(db_err)?;
     tx.execute(
         &format!("UPDATE prints SET name = ?1, description = ?2, updated_at = {NOW_SQL} WHERE id = ?3"),
@@ -316,17 +302,34 @@ pub fn update(conn: &Connection, id: i64, input: PrintInput) -> Result<Print, St
     .map_err(db_err)?;
     tx.execute("DELETE FROM print_filaments WHERE print_id = ?1", params![id])
         .map_err(db_err)?;
-    insert_rows(&tx, id, &input.filaments)?;
+    for row in &input.filaments {
+        tx.execute(
+            "INSERT INTO print_filaments (print_id, filament_id, grams_used) VALUES (?1, ?2, ?3)",
+            params![id, row.filament_id, used.get(&row.filament_id)],
+        )
+        .map_err(db_err)?;
+    }
     tx.commit().map_err(db_err)?;
     get(conn, id)
 }
 
+fn previous_filament_ids(conn: &Connection, id: i64) -> Result<HashSet<i64>, String> {
+    let mut stmt = conn
+        .prepare("SELECT filament_id FROM print_filaments WHERE print_id = ?1")
+        .map_err(db_err)?;
+    let ids = stmt
+        .query_map(params![id], |r| r.get::<_, i64>(0))
+        .map_err(db_err)?
+        .collect::<rusqlite::Result<HashSet<_>>>()
+        .map_err(db_err)?;
+    Ok(ids)
+}
+
 /// Calcula los gramos a descontar por filamento según el estado destino.
-/// Al completar, cada filamento usa `grams_estimated` salvo que se indique otro valor.
-/// Al fallar, cada filamento debe indicar `grams_used`. Cancelar o imprimir no descuentan.
+/// Al completar o fallar, cada filamento debe indicar `grams_used`. Cancelar o imprimir no descuentan.
 fn resolve_grams_used(
     to: &str,
-    rows: &[(i64, f64)],
+    filament_ids: &[i64],
     provided: Vec<GramsUsedInput>,
 ) -> Result<Vec<(i64, f64)>, String> {
     if !matches!(to, "completed" | "failed") {
@@ -341,17 +344,16 @@ fn resolve_grams_used(
         .collect();
     if provided
         .keys()
-        .any(|fid| !rows.iter().any(|(rid, _)| rid == fid))
+        .any(|fid| !filament_ids.contains(fid))
     {
         return Err("Un filamento no pertenece a la impresión".into());
     }
-    let mut out = Vec::with_capacity(rows.len());
-    for &(fid, estimated) in rows {
-        let used = match provided.get(&fid) {
-            Some(g) => *g,
-            None if to == "completed" => estimated,
-            None => return Err("Indicá los gramos usados de cada filamento".into()),
-        };
+    let mut out = Vec::with_capacity(filament_ids.len());
+    for &fid in filament_ids {
+        let used = provided
+            .get(&fid)
+            .copied()
+            .ok_or_else(|| "Indicá los gramos usados de cada filamento".to_string())?;
         if !(used >= 0.0 && used.is_finite()) {
             return Err("Los gramos usados no pueden ser negativos".into());
         }
@@ -374,16 +376,16 @@ pub fn change_status(
             status_label(to)
         ));
     }
-    let rows: Vec<(i64, f64)> = {
+    let ids: Vec<i64> = {
         let mut stmt = conn
-            .prepare("SELECT filament_id, grams_estimated FROM print_filaments WHERE print_id = ?1 ORDER BY rowid")
+            .prepare("SELECT filament_id FROM print_filaments WHERE print_id = ?1 ORDER BY rowid")
             .map_err(db_err)?;
-        stmt.query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?)))
+        stmt.query_map(params![id], |r| r.get(0))
             .map_err(db_err)?
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(db_err)?
     };
-    let used = resolve_grams_used(to, &rows, grams_used)?;
+    let used = resolve_grams_used(to, &ids, grams_used)?;
 
     let tx = conn.unchecked_transaction().map_err(db_err)?;
     apply_status(&tx, id, to, &used)?;
@@ -414,12 +416,9 @@ fn apply_status(conn: &Connection, id: i64, to: &str, used: &[(i64, f64)]) -> Re
     Ok(())
 }
 
-/// Solo las impresiones planificadas se borran; el resto queda como historial.
+/// Borra la impresión y sus filamentos asociados. Si estaba completada o fallida, sus gramos vuelven al stock.
 pub fn delete(conn: &Connection, id: i64) -> Result<(), String> {
-    let status = status_of(conn, id)?;
-    if status != "planned" {
-        return Err("Solo se pueden eliminar impresiones planificadas".into());
-    }
+    status_of(conn, id)?;
     conn.execute("DELETE FROM prints WHERE id = ?1", params![id])
         .map_err(db_err)?;
     Ok(())
@@ -447,7 +446,6 @@ mod tests {
                 color_hex: None,
                 diameter_mm: 1.75,
                 initial_weight_g: weight,
-                low_stock_threshold_g: 100.0,
                 price,
                 currency: "ARS".into(),
                 purchased_at: None,
@@ -457,19 +455,19 @@ mod tests {
         .id
     }
 
-    fn print_input(rows: &[(i64, f64)]) -> PrintInput {
+    fn print_input(filament_ids: &[i64]) -> PrintInput {
         PrintInput {
             name: "Llavero".into(),
             description: None,
-            filaments: rows
+            filaments: filament_ids
                 .iter()
-                .map(|&(filament_id, grams_estimated)| PrintFilamentInput { filament_id, grams_estimated })
+                .map(|&filament_id| PrintFilamentInput { filament_id })
                 .collect(),
         }
     }
 
-    fn new_print(c: &Connection, rows: &[(i64, f64)]) -> i64 {
-        create(c, print_input(rows), "planned", vec![]).unwrap().id
+    fn new_print(c: &Connection, filament_ids: &[i64]) -> i64 {
+        create(c, print_input(filament_ids), "planned", vec![]).unwrap().id
     }
 
     fn used(rows: &[(i64, f64)]) -> Vec<GramsUsedInput> {
@@ -501,35 +499,24 @@ mod tests {
     }
 
     #[test]
-    fn planned_and_printing_reserve_without_consuming() {
+    fn printing_does_not_consume_stock() {
         let c = conn();
         let f = new_filament(&c, 1000.0, None);
-        let id = new_print(&c, &[(f, 200.0)]);
-        let s = stock(&c, f);
-        assert_eq!((s.remaining_g, s.reserved_g, s.free_g), (1000.0, 200.0, 800.0));
+        let id = new_print(&c, &[f]);
         change_status(&c, id, "printing", vec![]).unwrap();
-        let s = stock(&c, f);
-        assert_eq!((s.remaining_g, s.reserved_g), (1000.0, 200.0));
+        assert_eq!(stock(&c, f).remaining_g, 1000.0);
     }
 
     #[test]
-    fn completing_defaults_grams_used_to_estimated() {
+    fn completing_requires_grams_used_for_every_filament() {
         let c = conn();
         let f = new_filament(&c, 1000.0, None);
-        let id = new_print(&c, &[(f, 200.0)]);
-        let print = change_status(&c, id, "completed", vec![]).unwrap();
-        assert_eq!(print.filaments[0].grams_used, Some(200.0));
+        let id = new_print(&c, &[f]);
+        assert!(change_status(&c, id, "completed", vec![]).is_err());
+        assert_eq!(status_of(&c, id).unwrap(), "planned");
+        let print = change_status(&c, id, "completed", used(&[(f, 180.0)])).unwrap();
+        assert_eq!(print.filaments[0].grams_used, Some(180.0));
         assert!(print.finished_at.is_some());
-        let s = stock(&c, f);
-        assert_eq!((s.remaining_g, s.reserved_g), (800.0, 0.0));
-    }
-
-    #[test]
-    fn completing_accepts_edited_grams_used() {
-        let c = conn();
-        let f = new_filament(&c, 1000.0, None);
-        let id = new_print(&c, &[(f, 200.0)]);
-        change_status(&c, id, "completed", used(&[(f, 180.0)])).unwrap();
         assert_eq!(stock(&c, f).remaining_g, 820.0);
     }
 
@@ -538,7 +525,7 @@ mod tests {
         let c = conn();
         let f1 = new_filament(&c, 1000.0, None);
         let f2 = new_filament(&c, 1000.0, None);
-        let id = new_print(&c, &[(f1, 100.0), (f2, 50.0)]);
+        let id = new_print(&c, &[f1, f2]);
         assert!(change_status(&c, id, "failed", used(&[(f1, 30.0)])).is_err());
         assert_eq!(status_of(&c, id).unwrap(), "planned");
         change_status(&c, id, "failed", used(&[(f1, 30.0), (f2, 10.0)])).unwrap();
@@ -550,19 +537,18 @@ mod tests {
     fn cancelled_consumes_nothing() {
         let c = conn();
         let f = new_filament(&c, 1000.0, None);
-        let id = new_print(&c, &[(f, 200.0)]);
+        let id = new_print(&c, &[f]);
         change_status(&c, id, "printing", vec![]).unwrap();
         let print = change_status(&c, id, "cancelled", vec![]).unwrap();
         assert_eq!(print.filaments[0].grams_used, None);
-        let s = stock(&c, f);
-        assert_eq!((s.remaining_g, s.reserved_g), (1000.0, 0.0));
+        assert_eq!(stock(&c, f).remaining_g, 1000.0);
     }
 
     #[test]
     fn grams_used_only_allowed_when_completing_or_failing() {
         let c = conn();
         let f = new_filament(&c, 1000.0, None);
-        let id = new_print(&c, &[(f, 200.0)]);
+        let id = new_print(&c, &[f]);
         assert!(change_status(&c, id, "cancelled", used(&[(f, 10.0)])).is_err());
     }
 
@@ -570,35 +556,34 @@ mod tests {
     fn terminal_prints_cannot_change_status() {
         let c = conn();
         let f = new_filament(&c, 1000.0, None);
-        let id = new_print(&c, &[(f, 200.0)]);
+        let id = new_print(&c, &[f]);
         change_status(&c, id, "cancelled", vec![]).unwrap();
         assert!(change_status(&c, id, "printing", vec![]).is_err());
-        assert!(change_status(&c, id, "completed", vec![]).is_err());
+        assert!(change_status(&c, id, "completed", used(&[(f, 1.0)])).is_err());
     }
 
     #[test]
     fn rejects_invalid_print_input() {
         let c = conn();
         let f = new_filament(&c, 1000.0, None);
-        assert!(create(&c, PrintInput { name: " ".into(), ..print_input(&[(f, 1.0)]) }, "planned", vec![]).is_err());
+        assert!(create(&c, PrintInput { name: " ".into(), ..print_input(&[f]) }, "planned", vec![]).is_err());
         assert!(create(&c, print_input(&[]), "planned", vec![]).is_err());
-        assert!(create(&c, print_input(&[(f, 10.0), (f, 20.0)]), "planned", vec![]).is_err());
-        assert!(create(&c, print_input(&[(f, 0.0)]), "planned", vec![]).is_err());
-        assert!(create(&c, print_input(&[(999, 10.0)]), "planned", vec![]).is_err());
+        assert!(create(&c, print_input(&[f, f]), "planned", vec![]).is_err());
+        assert!(create(&c, print_input(&[999]), "planned", vec![]).is_err());
         filaments::set_archived(&c, f, true).unwrap();
-        assert!(create(&c, print_input(&[(f, 10.0)]), "planned", vec![]).is_err());
+        assert!(create(&c, print_input(&[f]), "planned", vec![]).is_err());
     }
 
     #[test]
     fn can_be_created_in_any_status() {
         let c = conn();
         let f = new_filament(&c, 1000.0, None);
-        let printing = create(&c, print_input(&[(f, 100.0)]), "printing", vec![]).unwrap();
+        let printing = create(&c, print_input(&[f]), "printing", vec![]).unwrap();
         assert_eq!(printing.status, "printing");
         assert!(printing.started_at.is_some());
         assert_eq!(printing.filaments[0].grams_used, None);
 
-        let cancelled = create(&c, print_input(&[(f, 100.0)]), "cancelled", vec![]).unwrap();
+        let cancelled = create(&c, print_input(&[f]), "cancelled", vec![]).unwrap();
         assert!(cancelled.finished_at.is_some());
         assert_eq!(cancelled.filaments[0].grams_used, None);
         assert_eq!(stock(&c, f).remaining_g, 1000.0);
@@ -609,12 +594,12 @@ mod tests {
         let c = conn();
         let f1 = new_filament(&c, 1000.0, Some(20.0));
         let f2 = new_filament(&c, 1000.0, None);
-        let rows = print_input(&[(f1, 100.0), (f2, 50.0)]);
+        let rows = print_input(&[f1, f2]);
 
         assert!(create(&c, rows.clone(), "failed", used(&[(f1, 30.0)])).is_err());
         assert!(create(&c, rows.clone(), "cancelled", used(&[(f1, 30.0), (f2, 10.0)])).is_err());
 
-        let done = create(&c, rows.clone(), "completed", vec![]).unwrap();
+        let done = create(&c, rows.clone(), "completed", used(&[(f1, 100.0), (f2, 50.0)])).unwrap();
         assert_eq!(done.filaments[0].grams_used, Some(100.0));
         assert_eq!(done.filaments[1].grams_used, Some(50.0));
         assert_eq!(stock(&c, f1).remaining_g, 900.0);
@@ -627,35 +612,52 @@ mod tests {
 
 
     #[test]
-    fn only_planned_prints_can_be_deleted() {
+    fn any_print_can_be_deleted_and_restores_stock() {
         let c = conn();
         let f = new_filament(&c, 1000.0, None);
-        let planned = new_print(&c, &[(f, 10.0)]);
-        let done = new_print(&c, &[(f, 10.0)]);
-        change_status(&c, done, "completed", vec![]).unwrap();
-        assert!(delete(&c, done).is_err());
-        delete(&c, planned).unwrap();
+        let done = new_print(&c, &[f]);
+        change_status(&c, done, "completed", used(&[(f, 100.0)])).unwrap();
+        assert_eq!(stock(&c, f).remaining_g, 900.0);
+        delete(&c, done).unwrap();
         let rows: i64 = c
-            .query_row("SELECT COUNT(*) FROM print_filaments WHERE print_id = ?1", params![planned], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM print_filaments WHERE print_id = ?1", params![done], |r| r.get(0))
             .unwrap();
         assert_eq!(rows, 0);
-        assert_eq!(list(&c).unwrap().len(), 1);
+        assert_eq!(stock(&c, f).remaining_g, 1000.0);
     }
 
     #[test]
-    fn only_open_prints_can_be_edited() {
+    fn completed_print_edit_updates_grams_and_stock() {
+        let c = conn();
+        let f1 = new_filament(&c, 1000.0, None);
+        let f2 = new_filament(&c, 1000.0, None);
+        let f3 = new_filament(&c, 1000.0, None);
+        let id = new_print(&c, &[f1, f2]);
+        change_status(&c, id, "completed", used(&[(f1, 30.0), (f2, 10.0)])).unwrap();
+
+        assert!(update(&c, id, print_input(&[f1, f3]), used(&[(f1, 30.0)])).is_err());
+        let edited = update(&c, id, print_input(&[f1, f3]), used(&[(f1, 40.0), (f3, 5.0)])).unwrap();
+        assert_eq!(edited.filaments.iter().find(|f| f.filament_id == f1).unwrap().grams_used, Some(40.0));
+        assert_eq!(edited.filaments.iter().find(|f| f.filament_id == f3).unwrap().grams_used, Some(5.0));
+        assert_eq!(stock(&c, f1).remaining_g, 960.0);
+        assert_eq!(stock(&c, f2).remaining_g, 1000.0);
+        assert_eq!(stock(&c, f3).remaining_g, 995.0);
+    }
+
+    #[test]
+    fn open_print_edit_rejects_grams_used() {
         let c = conn();
         let f = new_filament(&c, 1000.0, None);
-        let id = new_print(&c, &[(f, 10.0)]);
-        change_status(&c, id, "failed", used(&[(f, 5.0)])).unwrap();
-        assert!(update(&c, id, print_input(&[(f, 10.0)])).is_err());
+        let id = new_print(&c, &[f]);
+        assert!(update(&c, id, print_input(&[f]), used(&[(f, 5.0)])).is_err());
+        assert!(update(&c, id, print_input(&[f]), vec![]).is_ok());
     }
 
     #[test]
     fn cost_uses_price_per_gram_of_used_grams() {
         let c = conn();
         let f = new_filament(&c, 1000.0, Some(25000.0));
-        let id = new_print(&c, &[(f, 200.0)]);
+        let id = new_print(&c, &[f]);
         assert!(get(&c, id).unwrap().costs.is_empty());
         let print = change_status(&c, id, "completed", used(&[(f, 100.0)])).unwrap();
         assert_eq!(print.costs, vec![CurrencyAmount { currency: "ARS".into(), amount: 2500.0 }]);

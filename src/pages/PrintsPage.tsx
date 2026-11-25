@@ -15,11 +15,11 @@ import {
   Button,
   Card,
   CardBody,
+  Combobox,
   EmptyState,
   IconButton,
   Input,
   Modal,
-  Select,
 } from "../components/ui";
 import { STATUS_BADGE, STATUS_LABEL } from "../lib/printStatus";
 import styles from "./Pages.module.css";
@@ -70,7 +70,7 @@ export function PrintsPage() {
             <EmptyState
               icon={Plus}
               title="Todavía no hay impresiones"
-              description="Cargá una impresión y los filamentos que va a usar para reservar su stock."
+              description="Cargá una impresión y los filamentos que va a usar."
             />
           )}
           <ul className={styles.list}>
@@ -92,7 +92,7 @@ export function PrintsPage() {
                             style={{ background: f.colorHex ?? "transparent" }}
                             aria-hidden
                           />
-                          {f.colorName} · {f.gramsUsed != null ? formatGrams(f.gramsUsed) : `${formatGrams(f.gramsEstimated)} estimados`}
+                          {f.colorName} · {f.gramsUsed != null ? formatGrams(f.gramsUsed) : "sin gramos registrados"}
                         </span>
                       ))}
                       <span>Creada {formatDate(p.createdAt)}</span>
@@ -100,7 +100,7 @@ export function PrintsPage() {
                     </div>
                   </div>
                   <span className={styles.rowActions}>
-                    <IconButton icon={Eye} label={`Ver detalle de ${p.name}`} onClick={() => setDialog({ kind: "detail", print: p })} />
+                    <IconButton icon={Eye} label={`Ver detalle de ${p.name}`} tooltip="Ver detalle" onClick={() => setDialog({ kind: "detail", print: p })} />
                     {p.status === "planned" && (
                       <Button size="sm" icon={Play} onClick={() => start(p)}>Iniciar</Button>
                     )}
@@ -115,16 +115,15 @@ export function PrintsPage() {
                         <Button size="sm" variant="ghost" icon={Ban} onClick={() => setDialog({ kind: "action", print: p, action: "cancel" })}>
                           Cancelar
                         </Button>
-                        <IconButton icon={Pencil} label={`Editar ${p.name}`} onClick={() => setDialog({ kind: "form", print: p })} />
                       </>
                     )}
-                    {p.status === "planned" && (
-                      <IconButton
-                        icon={Trash2}
-                        label={`Eliminar ${p.name}`}
-                        onClick={() => setDialog({ kind: "action", print: p, action: "delete" })}
-                      />
-                    )}
+                    <IconButton icon={Pencil} label={`Editar ${p.name}`} tooltip="Editar" onClick={() => setDialog({ kind: "form", print: p })} />
+                    <IconButton
+                      icon={Trash2}
+                      label={`Eliminar ${p.name}`}
+                      tooltip="Eliminar"
+                      onClick={() => setDialog({ kind: "action", print: p, action: "delete" })}
+                    />
                   </span>
                 </li>
               );
@@ -162,7 +161,6 @@ export function PrintsPage() {
 interface FilamentRow {
   key: number;
   filamentId: string;
-  grams: string;
   used: string;
 }
 
@@ -179,8 +177,12 @@ function initialForm(print?: Print): PrintFormState {
     description: print?.description ?? "",
     status: "planned",
     rows: print
-      ? print.filaments.map((f, i) => ({ key: i, filamentId: String(f.filamentId), grams: String(f.gramsEstimated), used: "" }))
-      : [{ key: 0, filamentId: "", grams: "", used: "" }],
+      ? print.filaments.map((f, i) => ({
+          key: i,
+          filamentId: String(f.filamentId),
+          used: f.gramsUsed != null ? String(f.gramsUsed) : "",
+        }))
+      : [{ key: 0, filamentId: "", used: "" }],
   };
 }
 
@@ -190,25 +192,21 @@ function toInput(form: PrintFormState): PrintInput {
     description: form.description.trim() || null,
     filaments: form.rows.map((r) => {
       if (r.filamentId === "") throw new Error("Elegí un filamento en cada fila");
-      const gramsEstimated = parseGrams(r.grams);
-      if (!Number.isFinite(gramsEstimated)) throw new Error("Ingresá los gramos estimados de cada filamento");
-      return { filamentId: Number(r.filamentId), gramsEstimated };
+      return { filamentId: Number(r.filamentId) };
     }),
   };
 }
 
-/// Solo aplica al crear como completada o fallida. Al completar, vacío = estimados.
+const recordsUsage = (status: PrintStatus) => status === "completed" || status === "failed";
+
+/// Solo se llama si la impresión descuenta stock: cada filamento necesita sus gramos usados.
 function toGramsUsed(form: PrintFormState): GramsUsedInput[] {
-  if (form.status !== "completed" && form.status !== "failed") return [];
-  return form.rows.flatMap((r) => {
+  return form.rows.map((r) => {
     const raw = r.used.trim();
-    if (raw === "") {
-      if (form.status === "failed") throw new Error("Ingresá los gramos usados de cada filamento");
-      return [];
-    }
+    if (raw === "") throw new Error("Ingresá los gramos usados de cada filamento");
     const value = parseGrams(raw);
-    if (!Number.isFinite(value) || value < 0) throw new Error("Los gramos usados no son válidos");
-    return [{ filamentId: Number(r.filamentId), gramsUsed: value }];
+    if (!Number.isFinite(value) || value < 0) throw new Error("Ingresá los gramos usados de cada filamento");
+    return { filamentId: Number(r.filamentId), gramsUsed: value };
   });
 }
 
@@ -218,7 +216,7 @@ function PrintModal({ print, onClose, onSaved }: { print?: Print; onClose: () =>
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const nextKey = useRef(form.rows.length);
-  const showUsed = !print && (form.status === "completed" || form.status === "failed");
+  const showUsed = recordsUsage(print ? print.status : form.status);
 
   useEffect(() => {
     api.listFilaments(true).then(setFilaments, (e: unknown) => setError(String(e)));
@@ -229,11 +227,6 @@ function PrintModal({ print, onClose, onSaved }: { print?: Print; onClose: () =>
 
   const setRow = (key: number, patch: Partial<FilamentRow>) =>
     set("rows", form.rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
-
-  // Al editar, la reserva actual de la propia impresión vuelve a estar disponible.
-  const ownReserved = (filamentId: number) =>
-    print?.filaments.find((f) => f.filamentId === filamentId)?.gramsEstimated ?? 0;
-  const freeOf = (f: Filament) => f.freeG + ownReserved(f.id);
 
   const optionsFor = (row: FilamentRow) =>
     filaments.filter((f) => {
@@ -248,10 +241,11 @@ function PrintModal({ print, onClose, onSaved }: { print?: Print; onClose: () =>
     setError(null);
     try {
       const input = toInput(form);
+      const gramsUsed = showUsed ? toGramsUsed(form) : [];
       if (print) {
-        await api.updatePrint(print.id, input);
+        await api.updatePrint(print.id, input, gramsUsed);
       } else {
-        await api.createPrint(input, form.status, toGramsUsed(form));
+        await api.createPrint(input, form.status, gramsUsed);
       }
       onSaved();
     } catch (err) {
@@ -265,6 +259,7 @@ function PrintModal({ print, onClose, onSaved }: { print?: Print; onClose: () =>
     <Modal
       title={print ? "Editar impresión" : "Nueva impresión"}
       onClose={onClose}
+      size="lg"
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancelar</Button>
@@ -283,48 +278,31 @@ function PrintModal({ print, onClose, onSaved }: { print?: Print; onClose: () =>
         />
 
         {!print && (
-          <Select label="Estado" value={form.status} onChange={(e) => set("status", e.target.value as PrintStatus)}>
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>{STATUS_LABEL[s]}</option>
-            ))}
-          </Select>
+          <Combobox
+            label="Estado"
+            value={form.status}
+            onChange={(v) => set("status", v as PrintStatus)}
+            options={STATUSES.map((s) => ({ value: s, label: STATUS_LABEL[s] }))}
+          />
         )}
 
         <div className={styles.filamentsBlock}>
           <span className={styles.sectionLabel}>Filamentos</span>
           {form.rows.map((row) => {
-            const selected = filaments.find((f) => String(f.id) === row.filamentId);
-            const grams = parseGrams(row.grams);
-            const over = selected && Number.isFinite(grams) && grams > freeOf(selected);
             return (
               <div
                 key={row.key}
                 className={`${styles.filamentFields} ${showUsed ? styles.filamentFieldsWithUsed : ""}`}
               >
-                <Select
+                <Combobox
                   label="Filamento"
                   value={row.filamentId}
-                  onChange={(e) => setRow(row.key, { filamentId: e.target.value })}
-                  required
-                >
-                  <option value="" disabled>Elegí un filamento</option>
-                  {optionsFor(row).map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.colorName} · {f.brandName} {materialLabel({ name: f.materialName, variant: f.materialVariant })}
-                      {f.archived ? " (archivado)" : ""} — libre {formatGrams(freeOf(f))}
-                    </option>
-                  ))}
-                </Select>
-                <Input
-                  label="Gramos estimados"
-                  type="number"
-                  min="0"
-                  step="any"
-                  inputMode="decimal"
-                  value={row.grams}
-                  onChange={(e) => setRow(row.key, { grams: e.target.value })}
-                  error={over ? `Supera lo libre (${formatGrams(freeOf(selected))})` : undefined}
-                  required
+                  onChange={(v) => setRow(row.key, { filamentId: v })}
+                  placeholder="Buscar filamento…"
+                  options={optionsFor(row).map((f) => ({
+                    value: String(f.id),
+                    label: `${f.colorName} · ${f.brandName} ${materialLabel({ name: f.materialName, variant: f.materialVariant })}${f.archived ? " (archivado)" : ""}`,
+                  }))}
                 />
                 {showUsed && (
                   <Input
@@ -335,8 +313,7 @@ function PrintModal({ print, onClose, onSaved }: { print?: Print; onClose: () =>
                     inputMode="decimal"
                     value={row.used}
                     onChange={(e) => setRow(row.key, { used: e.target.value })}
-                    hint={form.status === "completed" ? "Vacío = estimados" : "Gramos realmente gastados"}
-                    required={form.status === "failed"}
+                    required
                   />
                 )}
                 <IconButton
@@ -352,9 +329,7 @@ function PrintModal({ print, onClose, onSaved }: { print?: Print; onClose: () =>
             <Button
               size="sm"
               icon={Plus}
-              onClick={() =>
-                set("rows", [...form.rows, { key: nextKey.current++, filamentId: "", grams: "", used: "" }])
-              }
+              onClick={() => set("rows", [...form.rows, { key: nextKey.current++, filamentId: "", used: "" }])}
             >
               Agregar filamento
             </Button>
@@ -396,7 +371,6 @@ function PrintDetailModal({ print, onClose }: { print: Print; onClose: () => voi
                     <strong>{f.colorName}</strong> · {f.brandName} {materialLabel({ name: f.materialName, variant: f.materialVariant })}
                   </div>
                   <div className={styles.meta}>
-                    <span>Estimado {formatGrams(f.gramsEstimated)}</span>
                     <span>Usado {f.gramsUsed != null ? formatGrams(f.gramsUsed) : "—"}</span>
                   </div>
                 </div>
@@ -434,9 +408,7 @@ function ActionModal({
   onDone: () => void;
 }) {
   const [grams, setGrams] = useState<Record<number, string>>(() =>
-    Object.fromEntries(
-      print.filaments.map((f) => [f.filamentId, action === "complete" ? String(f.gramsEstimated) : ""]),
-    ),
+    Object.fromEntries(print.filaments.map((f) => [f.filamentId, ""])),
   );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -483,10 +455,10 @@ function ActionModal({
   }[action];
 
   const description = {
-    complete: "Confirmá los gramos realmente usados. Por defecto son los estimados.",
+    complete: "Indicá cuántos gramos se usaron de cada filamento.",
     fail: "Indicá cuántos gramos se gastaron realmente antes de la falla.",
     cancel: "La impresión se cancela y no descuenta stock.",
-    delete: "Se elimina la impresión planificada y se libera su reserva.",
+    delete: "Se elimina la impresión. Si ya descontaba stock, los gramos vuelven al filamento.",
   }[action];
 
   return (
@@ -522,8 +494,7 @@ function ActionModal({
               inputMode="decimal"
               value={grams[f.filamentId] ?? ""}
               onChange={(e) => setGrams((prev) => ({ ...prev, [f.filamentId]: e.target.value }))}
-              hint={`Estimados: ${formatGrams(f.gramsEstimated)}`}
-              required={action === "fail"}
+              required
             />
           ))}
       </div>

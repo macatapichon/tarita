@@ -57,7 +57,6 @@ CREATE TABLE filaments (
   color_hex             TEXT,
   diameter_mm           REAL NOT NULL DEFAULT 1.75 CHECK (diameter_mm IN (1.75, 2.85)),
   initial_weight_g      REAL NOT NULL DEFAULT 1000 CHECK (initial_weight_g > 0),
-  low_stock_threshold_g REAL NOT NULL DEFAULT 100,     -- alerta en el dashboard
   price                 REAL CHECK (price IS NULL OR price >= 0),  -- precio POR CARRETE
   currency              TEXT NOT NULL DEFAULT 'ARS' CHECK (currency IN ('ARS', 'USD')),
   purchased_at          TEXT,
@@ -81,7 +80,6 @@ CREATE TABLE prints (
 CREATE TABLE print_filaments (
   print_id        INTEGER NOT NULL REFERENCES prints(id) ON DELETE CASCADE,
   filament_id     INTEGER NOT NULL REFERENCES filaments(id),
-  grams_estimated REAL NOT NULL CHECK (grams_estimated > 0),
   grams_used      REAL CHECK (grams_used IS NULL OR grams_used >= 0),
   PRIMARY KEY (print_id, filament_id)
 );
@@ -100,8 +98,8 @@ CREATE INDEX idx_stock_adjustments_filament ON stock_adjustments(filament_id);
 
 Cambios respecto del MVP:
 
-- `print_filaments.grams` se divide en `grams_estimated` (lo planeado) y `grams_used`
-  (lo gastado de verdad). Con eso, reservado y consumido quedan separados.
+- `print_filaments` tiene `grams_used` por filamento (NULL mientras la impresión no esté cerrada).
+  Así una impresión puede usar varios carretes y cada uno descuenta lo suyo.
 - `brand` y `material` pasan a ser tablas propias (`brands`, `materials`) con ABM. Un
   material tiene `variant` opcional, así "PLA" + "High Speed" es una sola entrada del
   catálogo.
@@ -131,9 +129,8 @@ se corrige con un ajuste de stock.
 
 **Consumo al cerrar la impresión:**
 
-- `completed`: `grams_used` se completa con `grams_estimated` por defecto. El usuario puede
-  editarlo antes de confirmar.
-- `failed`: el usuario **debe** ingresar `grams_used` para cada filamento.
+- `completed` y `failed`: el usuario **debe** ingresar `grams_used` para cada filamento.
+- `planned` y `printing`: no descuentan nada.
 - `cancelled`: no descuenta nada. `grams_used` queda en NULL.
 
 **Fórmulas (siempre calculadas, nunca guardadas):**
@@ -142,22 +139,21 @@ se corrige con un ajuste de stock.
 consumido(f)  = Σ grams_used   de impresiones completed/failed
 ajustes(f)    = Σ grams_delta  de stock_adjustments
 restante(f)   = initial_weight_g − consumido(f) + ajustes(f)
-reservado(f)  = Σ grams_estimated de impresiones planned/printing
-libre(f)      = restante(f) − reservado(f)
 ```
 
-- `restante` es lo que dice el carrete. `libre` es lo que queda después de lo ya
-  planeado. Las barras muestran ambos.
-- Si `libre` queda negativo, la impresión se puede crear igual pero con una advertencia.
 - Como todo se deriva de las tablas, revertir un estado no deja stock inconsistente.
 
 **Ajustes:** se usan para corregir pesando el carrete. El usuario ingresa el peso neto
 (solo plástico) y la app calcula el delta (`neto − restante`) y lo guarda como ajuste.
+
+**Residuo:** acción sobre filamentos activos. El usuario ingresa los gramos descartados y la app
+guarda un ajuste con `grams_delta = −gramos` y motivo "Residuo". Debe ser mayor a 0 y finito.
 Ver sección 3.
 
-**Eliminación:** las impresiones completed, failed o cancelled no se borran (quedan
-como historial). Solo las planned se pueden eliminar. Los filamentos se archivan, nunca
-se borran si tienen historial.
+**Edición y eliminación:** cualquier impresión se puede editar y eliminar, en cualquier
+estado. Al editar una completed o failed, se deben indicar los gramos de cada filamento,
+igual que al crear. Eliminar una impresión que descontaba stock devuelve sus gramos al
+filamento. Los filamentos se archivan, nunca se borran si tienen historial.
 
 **Precio:** `price` es el precio por carrete, en `currency` (ARS por defecto, o USD). El
 costo por gramo es
@@ -198,8 +194,8 @@ abre y el archivo `tarita.db` se crea.
   - Diámetro: selector con 1.75 mm por defecto (2.85 mm disponible).
   - Peso inicial: 1000 g por defecto, editable.
   - Precio: primero el selector de moneda (ARS por defecto), después el importe.
-- Lista: swatch de color, marca, material y variante, y barra con `restante` (y marca para
-  `libre`). Filtro para mostrar archivados.
+- Lista: swatch de color, marca, material y variante, y barra con `restante`. Filtro para
+  mostrar archivados.
 - Validaciones: `initial_weight_g > 0`, marca, material y color obligatorios, `price ≥ 0`.
 
 **Verificación:** test de `restante` con y sin ajustes; test de que el seed inicial carga
@@ -217,14 +213,13 @@ selectores.
 
 - Comandos: `list_prints`, `get_print`, `create_print`, `update_print`, `change_print_status`,
   `delete_print` (solo planned).
-- Formulario: nombre, descripción, y una o más filas de filamento con gramos estimados.
-  Cada fila muestra el `libre` actual del filamento.
-- Cambio de estado: al completar, confirmar `grams_used` (default = estimado); al fallar,
-  pedir `grams_used` obligatorio.
+- Formulario: nombre, descripción, y una o más filas de filamento. Al crear como completed
+  o failed, cada fila pide sus gramos usados.
+- Cambio de estado: al completar o fallar, `grams_used` es obligatorio por filamento.
 - Todo cambio de estado corre en una transacción.
 
 **Verificación:** tests de Rust que cubran la máquina de estados (transiciones válidas e
-inválidas) y la tabla de casos de stock: planned no descuenta, printing reserva,
+inválidas) y la tabla de casos de stock: planned no descuenta, printing no descuenta,
 completed descuenta, failed descuenta `grams_used`, cancelled no descuenta, un
 filamento repetido en la misma impresión se rechaza, y el ajuste positivo y negativo.
 
@@ -238,9 +233,8 @@ UI en `src/pages/PrintsPage.tsx`. Desvíos respecto del plan:
 
 ### Etapa 3 — Dashboard
 
-- Stock total en gramos y en valor (si hay precio), con `restante` y `libre`.
+- Stock total en gramos y en valor (si hay precio), con `restante`.
 - Impresiones recientes (últimas 5) con estado.
-- Alerta por filamento cuyo `restante` esté por debajo de `low_stock_threshold_g`.
 - Usa Recharts solo si aporta (por ejemplo, consumo por mes). Si no, no se agrega.
 - **Reporte de costos (implementado):** `cost_report(year, month?)` en `src-tauri/src/reports.rs`,
   página `src/pages/DashboardPage.tsx`. Por período (mes o año completo) muestra
@@ -249,11 +243,14 @@ UI en `src/pages/PrintsPage.tsx`. Desvíos respecto del plan:
   el período, en hora local). Totales por moneda, sin sumar monedas distintas. Los carretes sin
   `purchased_at` no entran en "invertido". El gasto usa el precio actual del carrete.
 
-- **Stock, impresiones recientes y alertas (implementado):** `dashboard::summary` en
-  `src-tauri/src/dashboard.rs`, comando `dashboard_summary`. Muestra restante, reservado y libre
-  en gramos, valor por moneda, las últimas 5 impresiones y los filamentos bajo su umbral.
+- **Stock, impresiones recientes (implementado):** `dashboard::summary` en
+  `src-tauri/src/dashboard.rs`, comando `dashboard_summary`. Muestra restante en gramos, valor
+  por moneda y las últimas 5 impresiones. No hay reservas ni alertas de stock bajo: se
+  descartaron a pedido del usuario y se quitaron de la base (migración `003`).
+- **Residuo:** `dashboard::waste` suma los gramos de ajustes con motivo "Residuo" y su valor
+  por moneda (mismo criterio de precio que el stock), incluidos filamentos archivados.
 
-**Verificación:** tests de totales, reservado, valor, alertas y recientes en `dashboard.rs`;
+**Verificación:** tests de totales, valor y recientes en `dashboard.rs`;
 tests del reporte de costos en `reports.rs` (período, estados, monedas, mes inválido).
 
 ### Etapa 4 — Pulido y distribución (sugerida, no pedida)

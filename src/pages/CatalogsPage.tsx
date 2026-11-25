@@ -58,10 +58,11 @@ export function CatalogsPage() {
                 <span className={styles.rowTitle}>{b.name}</span>
                 {b.archived && <Badge variant="neutral">Archivada</Badge>}
                 <span className={styles.rowActions}>
-                  <IconButton icon={Pencil} label={`Editar ${b.name}`} onClick={() => setEditing({ kind: "brand", item: b })} />
+                  <IconButton icon={Pencil} label={`Editar ${b.name}`} tooltip="Editar" onClick={() => setEditing({ kind: "brand", item: b })} />
                   <IconButton
                     icon={b.archived ? ArchiveRestore : Archive}
                     label={b.archived ? `Desarchivar ${b.name}` : `Archivar ${b.name}`}
+                    tooltip={b.archived ? "Desarchivar" : "Archivar"}
                     onClick={() => toggleArchive("brand", b.id, !b.archived)}
                   />
                 </span>
@@ -89,10 +90,11 @@ export function CatalogsPage() {
                 <span className={styles.rowTitle}>{materialLabel(m)}</span>
                 {m.archived && <Badge variant="neutral">Archivado</Badge>}
                 <span className={styles.rowActions}>
-                  <IconButton icon={Pencil} label={`Editar ${materialLabel(m)}`} onClick={() => setEditing({ kind: "material", item: m })} />
+                  <IconButton icon={Pencil} label={`Editar ${materialLabel(m)}`} tooltip="Editar" onClick={() => setEditing({ kind: "material", item: m })} />
                   <IconButton
                     icon={m.archived ? ArchiveRestore : Archive}
                     label={m.archived ? `Desarchivar ${materialLabel(m)}` : `Archivar ${materialLabel(m)}`}
+                    tooltip={m.archived ? "Desarchivar" : "Archivar"}
                     onClick={() => toggleArchive("material", m.id, !m.archived)}
                   />
                 </span>

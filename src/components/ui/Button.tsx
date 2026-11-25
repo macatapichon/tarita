@@ -31,17 +31,19 @@ export function Button({ variant = "secondary", size = "md", icon: Icon, loading
 interface IconButtonProps extends Omit<ComponentProps<"button">, "children"> {
   icon: LucideIcon;
   label: string;
+  /** Texto del tooltip. Por defecto, el mismo que `label`. */
+  tooltip?: string;
   variant?: ButtonVariant;
   size?: ButtonSize;
   bordered?: boolean;
 }
 
-export function IconButton({ icon: Icon, label, variant = "ghost", size = "md", bordered = true, className, type = "button", ...rest }: IconButtonProps) {
+export function IconButton({ icon: Icon, label, tooltip, variant = "ghost", size = "md", bordered = true, className, type = "button", ...rest }: IconButtonProps) {
   return (
     <button
       type={type}
       aria-label={label}
-      title={label}
+      title={tooltip ?? label}
       className={cx(styles.btn, styles.icon, styles[variant], size === "sm" && styles.sm, bordered && styles.bordered, className)}
       {...rest}
     >

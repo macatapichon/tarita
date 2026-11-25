@@ -24,14 +24,11 @@ export interface Filament {
   colorHex: string | null;
   diameterMm: number;
   initialWeightG: number;
-  lowStockThresholdG: number;
   price: number | null;
   currency: "ARS" | "USD";
   purchasedAt: string | null;
   archived: boolean;
   remainingG: number;
-  reservedG: number;
-  freeG: number;
 }
 
 export interface FilamentInput {
@@ -41,7 +38,6 @@ export interface FilamentInput {
   colorHex: string | null;
   diameterMm: number;
   initialWeightG: number;
-  lowStockThresholdG: number;
   price: number | null;
   currency: "ARS" | "USD";
   purchasedAt: string | null;
@@ -56,7 +52,6 @@ export interface PrintFilament {
   materialVariant: string | null;
   colorName: string;
   colorHex: string | null;
-  gramsEstimated: number;
   gramsUsed: number | null;
   currency: "ARS" | "USD";
   cost: number | null;
@@ -82,7 +77,6 @@ export interface Print {
 
 export interface PrintFilamentInput {
   filamentId: number;
-  gramsEstimated: number;
 }
 
 export interface PrintInput {
@@ -129,15 +123,18 @@ export interface CurrencyValue {
 
 export interface StockSummary {
   remainingG: number;
-  reservedG: number;
-  freeG: number;
+  value: CurrencyValue[];
+}
+
+export interface WasteSummary {
+  grams: number;
   value: CurrencyValue[];
 }
 
 export interface DashboardSummary {
   stock: StockSummary;
+  waste: WasteSummary;
   recentPrints: Print[];
-  lowStock: Filament[];
 }
 
 export const api = {
@@ -154,10 +151,13 @@ export const api = {
   updateFilament: (id: number, input: FilamentInput) => invoke<Filament>("update_filament", { id, input }),
   setFilamentArchived: (id: number, archived: boolean) =>
     invoke<Filament>("set_filament_archived", { id, archived }),
+  addFilamentWaste: (id: number, grams: number) =>
+    invoke<Filament>("add_filament_waste", { id, grams }),
   listPrints: () => invoke<Print[]>("list_prints"),
   createPrint: (input: PrintInput, status: PrintStatus, gramsUsed: GramsUsedInput[]) =>
     invoke<Print>("create_print", { input, status, gramsUsed }),
-  updatePrint: (id: number, input: PrintInput) => invoke<Print>("update_print", { id, input }),
+  updatePrint: (id: number, input: PrintInput, gramsUsed: GramsUsedInput[]) =>
+    invoke<Print>("update_print", { id, input, gramsUsed }),
   changePrintStatus: (id: number, status: PrintStatus, gramsUsed: GramsUsedInput[] | null) =>
     invoke<Print>("change_print_status", { id, status, gramsUsed }),
   deletePrint: (id: number) => invoke<void>("delete_print", { id }),

@@ -10,7 +10,7 @@ interface ModalProps {
   children: ReactNode;
   /** Botones alineados a la derecha (secundario + primario). */
   footer?: ReactNode;
-  size?: "sm" | "md";
+  size?: "sm" | "md" | "lg";
 }
 
 export function Modal({ title, onClose, children, footer, size = "md" }: ModalProps) {
@@ -34,7 +34,7 @@ export function Modal({ title, onClose, children, footer, size = "md" }: ModalPr
       onCancel={(e) => { e.preventDefault(); onClose(); }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className={cx(styles.panel, size === "sm" && styles.sm)}>
+      <div className={cx(styles.panel, size === "sm" && styles.sm, size === "lg" && styles.lg)}>
         <div className={styles.header}>
           <h2 id={titleId} className={styles.title}>{title}</h2>
           <IconButton icon={X} label="Cerrar" size="sm" bordered={false} onClick={onClose} />

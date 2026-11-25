@@ -4,6 +4,7 @@ use std::path::Path;
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/001_init.sql")),
     (2, include_str!("../migrations/002_brands_nocase.sql")),
+    (3, include_str!("../migrations/003_drop_reserves_and_alerts.sql")),
 ];
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -39,7 +40,7 @@ mod tests {
         migrate(&mut conn).unwrap();
 
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, MIGRATIONS.len() as i64);
 
         let brands: i64 = conn.query_row("SELECT COUNT(*) FROM brands", [], |r| r.get(0)).unwrap();
         assert_eq!(brands, 5);

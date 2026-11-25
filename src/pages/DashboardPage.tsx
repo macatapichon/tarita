@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BarChart3, Printer, TriangleAlert } from "lucide-react";
+import { BarChart3, Printer } from "lucide-react";
 import {
   api,
   materialLabel,
@@ -8,7 +8,7 @@ import {
 } from "../lib/api";
 import { useLoad } from "../lib/useLoad";
 import { STATUS_BADGE, STATUS_LABEL } from "../lib/printStatus";
-import { Badge, Card, CardBody, CardHeader, EmptyState, ProgressBar, Select } from "../components/ui";
+import { Badge, Card, CardBody, CardHeader, Combobox, EmptyState } from "../components/ui";
 import styles from "./Pages.module.css";
 import dashboard from "./DashboardPage.module.css";
 
@@ -54,14 +54,27 @@ export function DashboardPage() {
           <Card>
             <CardHeader
               title="Stock"
-              description="Carretes no archivados. Reservado: impresiones planificadas o en curso, que todavía no descuentan."
+              description="Carretes no archivados, con lo que queda según las impresiones registradas."
             />
             <CardBody>
               <div className={dashboard.tiles}>
                 <Tile label="Restante" value={formatGrams(summary.data.stock.remainingG)} />
-                <Tile label="Reservado" value={formatGrams(summary.data.stock.reservedG)} />
-                <Tile label="Libre" value={formatGrams(summary.data.stock.freeG)} />
                 {summary.data.stock.value.map((v) => (
+                  <Tile key={v.currency} label={`Valor ${v.currency}`} value={formatMoney(v.value, v.currency)} />
+                ))}
+              </div>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Residuo"
+              description="Gramos descartados porque la impresora no los toma. Histórico, incluye filamentos archivados."
+            />
+            <CardBody>
+              <div className={dashboard.tiles}>
+                <Tile label="Descartado" value={formatGrams(summary.data.waste.grams)} />
+                {summary.data.waste.value.map((v) => (
                   <Tile key={v.currency} label={`Valor ${v.currency}`} value={formatMoney(v.value, v.currency)} />
                 ))}
               </div>
@@ -70,42 +83,6 @@ export function DashboardPage() {
 
           <div className={dashboard.columns}>
             <Card>
-              <CardHeader title="Stock bajo" description="Carretes por debajo de su aviso de stock bajo." />
-              <CardBody flush>
-                {summary.data.lowStock.length === 0 ? (
-                  <EmptyState
-                    icon={TriangleAlert}
-                    title="Sin alertas"
-                    description="Todos los carretes están por encima de su umbral."
-                  />
-                ) : (
-                  <ul className={styles.list}>
-                    {summary.data.lowStock.map((f) => (
-                      <li key={f.id} className={styles.filamentRow}>
-                        <span
-                          className={styles.swatch}
-                          style={{ background: f.colorHex ?? "transparent" }}
-                          aria-hidden
-                        />
-                        <div className={styles.filamentInfo}>
-                          <div className={styles.rowTitle}>
-                            {f.brandName} · {materialLabel({ name: f.materialName, variant: f.materialVariant })} · {f.colorName}
-                          </div>
-                          <ProgressBar
-                            value={Math.max(f.remainingG, 0)}
-                            max={f.initialWeightG}
-                            label={`${formatGrams(f.remainingG)} de ${formatGrams(f.initialWeightG)}`}
-                            aria-label={`Stock de ${f.colorName}`}
-                          />
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </CardBody>
-            </Card>
-
-            <Card>
               <CardHeader title="Impresiones recientes" />
               <CardBody flush>
                 {summary.data.recentPrints.length === 0 ? (
@@ -113,13 +90,15 @@ export function DashboardPage() {
                 ) : (
                   <ul className={styles.list}>
                     {summary.data.recentPrints.map((p) => {
-                      const grams = p.filaments.reduce((sum, f) => sum + f.gramsEstimated, 0);
+                      const used = p.filaments.reduce((sum, f) => sum + (f.gramsUsed ?? 0), 0);
+                      const hasUsed = p.filaments.some((f) => f.gramsUsed != null);
                       return (
                         <li key={p.id} className={styles.filamentRow}>
                           <div className={styles.filamentInfo}>
                             <div className={styles.rowTitle}>{p.name}</div>
                             <div className={styles.meta}>
-                              {formatDate(p.createdAt)} · {p.filaments.length} filamento(s) · {formatGrams(grams)}
+                              {formatDate(p.createdAt)} · {p.filaments.length} filamento(s)
+                              {hasUsed && ` · ${formatGrams(used)} usados`}
                             </div>
                           </div>
                           <Badge variant={STATUS_BADGE[p.status]}>{STATUS_LABEL[p.status]}</Badge>
@@ -137,17 +116,18 @@ export function DashboardPage() {
       <div className={styles.toolbar}>
         <span />
         <div className={dashboard.filters}>
-          <Select label="Período" value={month} onChange={(e) => setMonth(e.target.value)}>
-            <option value="">Todo el año</option>
-            {MONTHS.map((name, i) => (
-              <option key={name} value={i + 1}>{name}</option>
-            ))}
-          </Select>
-          <Select label="Año" value={year} onChange={(e) => setYear(Number(e.target.value))}>
-            {YEARS.map((y) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </Select>
+          <Combobox
+            label="Período"
+            value={month}
+            onChange={setMonth}
+            options={[{ value: "", label: "Todo el año" }, ...MONTHS.map((name, i) => ({ value: String(i + 1), label: name }))]}
+          />
+          <Combobox
+            label="Año"
+            value={String(year)}
+            onChange={(v) => setYear(Number(v))}
+            options={YEARS.map((y) => ({ value: String(y), label: String(y) }))}
+          />
         </div>
       </div>
       {report.error && <p className={styles.error} role="alert">{report.error}</p>}

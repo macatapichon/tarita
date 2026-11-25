@@ -138,7 +138,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) 150px auto;
   gap: var(--space-3);
-  align-items: start;
+  align-items: end;
 }
 
 .filamentFieldsWithUsed {

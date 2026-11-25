@@ -19,17 +19,12 @@ pub struct Filament {
     pub color_hex: Option<String>,
     pub diameter_mm: f64,
     pub initial_weight_g: f64,
-    pub low_stock_threshold_g: f64,
     pub price: Option<f64>,
     pub currency: String,
     pub purchased_at: Option<String>,
     pub archived: bool,
     /// initial − consumido + ajustes. Lo que dice el carrete.
     pub remaining_g: f64,
-    /// Σ grams_estimated de impresiones planned/printing.
-    pub reserved_g: f64,
-    /// remaining − reserved. Puede ser negativo (se avisa, no se bloquea).
-    pub free_g: f64,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -41,7 +36,6 @@ pub struct FilamentInput {
     pub color_hex: Option<String>,
     pub diameter_mm: f64,
     pub initial_weight_g: f64,
-    pub low_stock_threshold_g: f64,
     pub price: Option<f64>,
     pub currency: String,
     pub purchased_at: Option<String>,
@@ -50,23 +44,18 @@ pub struct FilamentInput {
 const FILAMENT_SELECT: &str = "
 SELECT f.id, f.brand_id, b.name, f.material_id, m.name, m.variant,
        f.color_name, f.color_hex, f.diameter_mm, f.initial_weight_g,
-       f.low_stock_threshold_g, f.price, f.currency, f.purchased_at, f.archived,
+       f.price, f.currency, f.purchased_at, f.archived,
        f.initial_weight_g
          - COALESCE((SELECT SUM(pf.grams_used) FROM print_filaments pf
                      JOIN prints p ON p.id = pf.print_id
                      WHERE pf.filament_id = f.id AND p.status IN ('completed', 'failed')), 0)
          + COALESCE((SELECT SUM(a.grams_delta) FROM stock_adjustments a
-                     WHERE a.filament_id = f.id), 0) AS remaining_g,
-       COALESCE((SELECT SUM(pf.grams_estimated) FROM print_filaments pf
-                 JOIN prints p ON p.id = pf.print_id
-                 WHERE pf.filament_id = f.id AND p.status IN ('planned', 'printing')), 0) AS reserved_g
+                     WHERE a.filament_id = f.id), 0) AS remaining_g
 FROM filaments f
 JOIN brands b ON b.id = f.brand_id
 JOIN materials m ON m.id = f.material_id";
 
 fn map_row(r: &Row) -> rusqlite::Result<Filament> {
-    let remaining_g: f64 = r.get(15)?;
-    let reserved_g: f64 = r.get(16)?;
     Ok(Filament {
         id: r.get(0)?,
         brand_id: r.get(1)?,
@@ -78,14 +67,11 @@ fn map_row(r: &Row) -> rusqlite::Result<Filament> {
         color_hex: r.get(7)?,
         diameter_mm: r.get(8)?,
         initial_weight_g: r.get(9)?,
-        low_stock_threshold_g: r.get(10)?,
-        price: r.get(11)?,
-        currency: r.get(12)?,
-        purchased_at: r.get(13)?,
-        archived: r.get::<_, i64>(14)? == 1,
-        remaining_g,
-        reserved_g,
-        free_g: remaining_g - reserved_g,
+        price: r.get(10)?,
+        currency: r.get(11)?,
+        purchased_at: r.get(12)?,
+        archived: r.get::<_, i64>(13)? == 1,
+        remaining_g: r.get(14)?,
     })
 }
 
@@ -115,9 +101,6 @@ pub fn validate(input: FilamentInput) -> Result<FilamentInput, String> {
     }
     if !(input.initial_weight_g > 0.0) {
         return Err("El peso inicial debe ser mayor a 0 g".into());
-    }
-    if !(input.low_stock_threshold_g >= 0.0) {
-        return Err("El aviso de stock bajo no puede ser negativo".into());
     }
     if input.price.is_some_and(|p| !(p >= 0.0)) {
         return Err("El precio no puede ser negativo".into());
@@ -167,8 +150,8 @@ pub fn create(conn: &Connection, input: FilamentInput) -> Result<Filament, Strin
     ensure_catalog_refs(conn, &input)?;
     conn.execute(
         "INSERT INTO filaments (brand_id, material_id, color_name, color_hex, diameter_mm,
-            initial_weight_g, low_stock_threshold_g, price, currency, purchased_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            initial_weight_g, price, currency, purchased_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             input.brand_id,
             input.material_id,
@@ -176,7 +159,6 @@ pub fn create(conn: &Connection, input: FilamentInput) -> Result<Filament, Strin
             input.color_hex,
             input.diameter_mm,
             input.initial_weight_g,
-            input.low_stock_threshold_g,
             input.price,
             input.currency,
             input.purchased_at
@@ -192,9 +174,9 @@ pub fn update(conn: &Connection, id: i64, input: FilamentInput) -> Result<Filame
     let changed = conn
         .execute(
             "UPDATE filaments SET brand_id = ?1, material_id = ?2, color_name = ?3, color_hex = ?4,
-                diameter_mm = ?5, initial_weight_g = ?6, low_stock_threshold_g = ?7, price = ?8,
-                currency = ?9, purchased_at = ?10, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-             WHERE id = ?11",
+                diameter_mm = ?5, initial_weight_g = ?6, price = ?7,
+                currency = ?8, purchased_at = ?9, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?10",
             params![
                 input.brand_id,
                 input.material_id,
@@ -202,7 +184,6 @@ pub fn update(conn: &Connection, id: i64, input: FilamentInput) -> Result<Filame
                 input.color_hex,
                 input.diameter_mm,
                 input.initial_weight_g,
-                input.low_stock_threshold_g,
                 input.price,
                 input.currency,
                 input.purchased_at,
@@ -219,6 +200,24 @@ pub fn update(conn: &Connection, id: i64, input: FilamentInput) -> Result<Filame
 pub fn set_archived(conn: &Connection, id: i64, archived: bool) -> Result<Filament, String> {
     let changed = conn
         .execute("UPDATE filaments SET archived = ?1 WHERE id = ?2", params![archived, id])
+        .map_err(|e| e.to_string())?;
+    if changed == 0 {
+        return Err("Filamento no encontrado".into());
+    }
+    get(conn, id)
+}
+
+/// Descuenta gramos que no se pueden imprimir (la impresora no los toma, etc.).
+pub fn add_waste(conn: &Connection, id: i64, grams: f64) -> Result<Filament, String> {
+    if !(grams > 0.0 && grams.is_finite()) {
+        return Err("Los gramos de residuo deben ser mayores a 0".into());
+    }
+    let changed = conn
+        .execute(
+            "INSERT INTO stock_adjustments (filament_id, grams_delta, reason)
+             SELECT id, ?2, 'Residuo' FROM filaments WHERE id = ?1",
+            params![id, -grams],
+        )
         .map_err(|e| e.to_string())?;
     if changed == 0 {
         return Err("Filamento no encontrado".into());
@@ -245,14 +244,13 @@ mod tests {
             color_hex: Some("#FFFFFF".into()),
             diameter_mm: 1.75,
             initial_weight_g: 1000.0,
-            low_stock_threshold_g: 100.0,
             price: Some(25000.0),
             currency: "ARS".into(),
             purchased_at: None,
         }
     }
 
-    fn add_print(c: &Connection, status: &str, grams: f64, used: Option<f64>, filament: i64) {
+    fn add_print(c: &Connection, status: &str, used: Option<f64>, filament: i64) {
         c.execute(
             "INSERT INTO prints (name, status) VALUES ('p', ?1)",
             params![status],
@@ -260,9 +258,8 @@ mod tests {
         .unwrap();
         let print_id = c.last_insert_rowid();
         c.execute(
-            "INSERT INTO print_filaments (print_id, filament_id, grams_estimated, grams_used)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![print_id, filament, grams, used],
+            "INSERT INTO print_filaments (print_id, filament_id, grams_used) VALUES (?1, ?2, ?3)",
+            params![print_id, filament, used],
         )
         .unwrap();
     }
@@ -272,29 +269,38 @@ mod tests {
         let c = conn();
         let f = create(&c, input()).unwrap();
         assert_eq!(f.remaining_g, 1000.0);
-        assert_eq!(f.reserved_g, 0.0);
-        assert_eq!(f.free_g, 1000.0);
     }
 
     #[test]
     fn remaining_discounts_completed_and_failed_only() {
         let c = conn();
         let f = create(&c, input()).unwrap();
-        add_print(&c, "completed", 100.0, Some(90.0), f.id);
-        add_print(&c, "failed", 50.0, Some(20.0), f.id);
-        add_print(&c, "cancelled", 300.0, None, f.id);
-        add_print(&c, "planned", 200.0, None, f.id);
-        let got = get(&c, f.id).unwrap();
-        assert_eq!(got.remaining_g, 890.0);
-        assert_eq!(got.reserved_g, 200.0);
-        assert_eq!(got.free_g, 690.0);
+        add_print(&c, "completed", Some(90.0), f.id);
+        add_print(&c, "failed", Some(20.0), f.id);
+        add_print(&c, "cancelled", None, f.id);
+        add_print(&c, "planned", None, f.id);
+        add_print(&c, "printing", None, f.id);
+        assert_eq!(get(&c, f.id).unwrap().remaining_g, 890.0);
+    }
+
+    #[test]
+    fn waste_reduces_remaining_and_rejects_invalid_grams() {
+        let c = conn();
+        let f = create(&c, input()).unwrap();
+        let after = add_waste(&c, f.id, 45.5).unwrap();
+        assert_eq!(after.remaining_g, 954.5);
+        assert!(add_waste(&c, f.id, 0.0).is_err());
+        assert!(add_waste(&c, f.id, -5.0).is_err());
+        assert!(add_waste(&c, f.id, f64::NAN).is_err());
+        assert!(add_waste(&c, 999, 10.0).is_err());
+        assert_eq!(get(&c, f.id).unwrap().remaining_g, 954.5);
     }
 
     #[test]
     fn adjustments_add_to_remaining() {
         let c = conn();
         let f = create(&c, input()).unwrap();
-        add_print(&c, "completed", 100.0, Some(100.0), f.id);
+        add_print(&c, "completed", Some(100.0), f.id);
         c.execute(
             "INSERT INTO stock_adjustments (filament_id, grams_delta, reason) VALUES (?1, 30, 'pesaje')",
             params![f.id],
