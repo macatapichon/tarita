@@ -77,8 +77,8 @@ Ejecuta `pnpm build` (`tsc` + `vite build` → `dist/`), compila Rust en modo re
 
 | Archivo | Uso |
 |---------|-----|
-| `macos/tarita.app` | La app. Se copia a `/Applications`. |
-| `dmg/tarita_<versión>_aarch64.dmg` | Instalador para Apple Silicon. |
+| `macos/Tarita.app` | La app. Se copia a `/Applications`. |
+| `dmg/Tarita_<versión>_aarch64.dmg` | Instalador para Apple Silicon. |
 
 - Con la app instalada **no hace falta** `pnpm tauri dev`.
 - Para actualizar: cambiás el código, corrés `pnpm tauri build` otra vez y reemplazás el `.app` en `/Applications`
